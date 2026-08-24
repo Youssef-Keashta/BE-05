@@ -8,4 +8,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Folder Include="cache\" />
+    <Folder Include="output\" />
+  </ItemGroup>
+
 </Project>
