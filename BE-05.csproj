@@ -13,4 +13,8 @@
     <Folder Include="output\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="AngleSharp" Version="1.7.2" />
+  </ItemGroup>
+
 </Project>
