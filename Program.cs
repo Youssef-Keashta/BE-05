@@ -1,5 +1,7 @@
 ﻿using AngleSharp;
 using AngleSharp.Dom;
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 
 namespace BE_05
 {
@@ -20,6 +22,9 @@ namespace BE_05
 
             string bookDir = @"cache\books";
             Directory.CreateDirectory(bookDir);
+
+            string outputDir = "output";
+            Directory.CreateDirectory(outputDir);
 
             const int maxPages = 3;
             var allBookLinks = new List<(string bookUrl, string sourcePage)>();
@@ -53,7 +58,7 @@ namespace BE_05
                     .Select(g => g.First())
                     .ToList();
 
-                var books = new List<Book>();
+                var books = new List<RawBook>();
 
                 for (int i = 0; i < uniqueUrls.Count; i++)
                 {
@@ -63,7 +68,7 @@ namespace BE_05
 
                     var (html, wasCacheHit) = await FetchWithCacheAsync(bookUrl, cacheFile);
 
-                    Book book = await ExtractBookData(html, bookUrl, sourcePage);
+                    RawBook book = await ExtractBookData(html, bookUrl, sourcePage);
                     books.Add(book);
 
                     if (!wasCacheHit)
@@ -78,21 +83,65 @@ namespace BE_05
                 Console.WriteLine($"detail_pages={books.Count}");
                 Console.WriteLine();
 
-                Console.WriteLine("Sample record:");
-                Console.WriteLine($"  Title: {books[0].Title}");
-                Console.WriteLine($"  ProductUrl: {books[0].ProductUrl}");
-                Console.WriteLine($"  PriceText: {books[0].PriceText}");
-                Console.WriteLine($"  AvailabilityText: {books[0].AvailabilityText}");
-                Console.WriteLine($"  RatingText: {books[0].RatingText}");
-                Console.WriteLine($"  Description: {books[0].Description ?? "null"}");
-                Console.WriteLine($"  SourcePage: {books[0].SourcePage}");
-                Console.WriteLine($"  FetchedAt: {books[0].FetchedAt}");
+                // Normalize
+                List<Book> normalizedBooks = books.Select(NormalizeBook).ToList();
 
-                var noDescriptionExample = books.FirstOrDefault(b => b.Description == null);
+                // Cross-record uniqueness check
+                var duplicateUrls = normalizedBooks
+                    .GroupBy(b => b.ProductUrl)
+                    .Where(g => g.Count() > 1)
+                    .Select(g => g.Key)
+                    .ToHashSet();
+
+                var validBooks = new List<Book>();
+                var invalidBooks = new List<(Book book, List<string> reasons)>();
+
+                foreach (var book in normalizedBooks)
+                {
+                    var reasons = new List<string>();
+
+                    var validationResults = ValidateBook(book);
+                    reasons.AddRange(validationResults.Select(r => r.ErrorMessage ?? "Unknown validation error"));
+
+                    if (duplicateUrls.Contains(book.ProductUrl))
+                    {
+                        reasons.Add($"Duplicate ProductUrl: {book.ProductUrl}");
+                    }
+
+                    if (reasons.Count == 0)
+                    {
+                        validBooks.Add(book);
+                    }
+                    else
+                    {
+                        invalidBooks.Add((book, reasons));
+                    }
+                }
+
+                Console.WriteLine($"valid_books={validBooks.Count}");
+                Console.WriteLine($"invalid_books={invalidBooks.Count}");
+
+                // Serialize valid records
+                var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+
+                string booksJsonPath = Path.Combine(outputDir, "books.json");
+                string booksJson = JsonSerializer.Serialize(validBooks, jsonOptions);
+                await File.WriteAllTextAsync(booksJsonPath, booksJson);
+
+                // Serialize invalid records + reasons
+                var errorRecords = invalidBooks.Select(x => new
+                {
+                    Book = x.book,
+                    Reasons = x.reasons
+                }).ToList();
+
+                string errorsJsonPath = Path.Combine(outputDir, "errors.json");
+                string errorsJson = JsonSerializer.Serialize(errorRecords, jsonOptions);
+                await File.WriteAllTextAsync(errorsJsonPath, errorsJson);
+
                 Console.WriteLine();
-                Console.WriteLine(noDescriptionExample != null
-                    ? $"Found a book with null description: {noDescriptionExample.Title}"
-                    : "No book with null description found in this batch.");
+                Console.WriteLine($"Wrote {validBooks.Count} valid records to {booksJsonPath}");
+                Console.WriteLine($"Wrote {invalidBooks.Count} invalid records to {errorsJsonPath}");
             }
             catch (HttpRequestException e)
             {
@@ -169,7 +218,7 @@ namespace BE_05
             return null;
         }
 
-        static async Task<Book> ExtractBookData(string html, string bookUrl, string pageUrl)
+        static async Task<RawBook> ExtractBookData(string html, string bookUrl, string pageUrl)
         {
             var config = Configuration.Default;
             var context = BrowsingContext.New(config);
@@ -181,7 +230,7 @@ namespace BE_05
             var rating = document.QuerySelector("p.star-rating")?.ClassList;
             var description = document.QuerySelector("#product_description");
 
-            return new Book
+            return new RawBook
             {
                 Title = title?.TextContent,
                 PriceText = price?.TextContent,
@@ -192,6 +241,41 @@ namespace BE_05
                 ProductUrl = bookUrl,
                 FetchedAt = DateTime.UtcNow.ToString("o")
             };
+        }
+
+        static Book NormalizeBook(RawBook raw)
+        {
+            decimal price;
+            string? priceText = raw?.PriceText;
+            if (!string.IsNullOrEmpty(priceText))
+            {
+                string normalizedPrice = priceText.TrimStart().TrimStart('£').Trim();
+                if (!decimal.TryParse(normalizedPrice, out price))
+                {
+                    price = -1m;
+                }
+            }
+            else price = -1m;
+            return new Book
+            {
+                Title = raw?.Title,
+                PriceText = raw?.PriceText,
+                PriceGBP = price,
+                AvailabilityText = raw?.AvailabilityText,
+                RatingText = raw?.RatingText,
+                Description = raw?.Description,
+                SourcePage = raw?.SourcePage,
+                ProductUrl = raw?.ProductUrl,
+                FetchedAt = raw?.FetchedAt
+            };
+        }
+
+        static List<ValidationResult> ValidateBook(Book book)
+        {
+            var context = new ValidationContext(book);
+            var results = new List<ValidationResult>();
+            Validator.TryValidateObject(book, context, results, validateAllProperties: true);
+            return results;
         }
     }
 }

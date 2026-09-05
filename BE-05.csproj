@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <Folder Include="cache\" />
+    <Folder Include="cache\books\" />
     <Folder Include="output\" />
   </ItemGroup>
 

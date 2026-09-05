@@ -1,28 +1,18 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Text;
 
 namespace BE_05
 {
-    internal class Book
+    internal class RawBook
     {
-        [Required]
         public string? Title { get; set; }
-        [Required]
         public string ProductUrl { get; set; } = "";
-        [Required]
         public string? PriceText { get; set; }
-        [Range(0.01, double.MaxValue, ErrorMessage = "PriceGBP must be greater than zero.")]
-        public decimal? PriceGBP { get; set; }
-        [Required]
         public string? AvailabilityText { get; set; }
-        [Required]
         public string? RatingText { get; set; }
         public string? Description { get; set; }
-        [Required]
         public string SourcePage { get; set; } = "";
-        [Required]
         public string FetchedAt { get; set; } = "";
     }
 }
